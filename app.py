@@ -1537,6 +1537,7 @@ Your capabilities:
 2. Provide advice on the best time to transfer based on current prices
 3. Give recommendations on transaction strategies
 4. Help users understand market conditions
+5. Calculate portfolio value with multiple cryptocurrencies
 
 Response formats:
 
@@ -1546,8 +1547,11 @@ Response formats:
 **For multiple prices:**
 {{"action": "get_multiple_prices", "symbols": ["eth", "btc"], "message": "Getting prices..."}}
 
-**For transfer advice (after getting prices):**
+**For transfer advice:**
 {{"action": "transfer_advice", "symbol": "eth", "amount": 0.5, "message": "Analyzing transfer conditions..."}}
+
+**For portfolio calculation:**
+{{"action": "calculate_portfolio", "holdings": {{"eth": 2, "btc": 0.5, "sol": 10}}, "message": "Calculating your portfolio value..."}}
 
 **For general advice:**
 {{"action": "advice", "message": "Your personalized advice here..."}}
@@ -1559,8 +1563,11 @@ Examples:
 - User: "Should I transfer 0.5 ETH now?"
   Response: {{"action": "transfer_advice", "symbol": "eth", "amount": 0.5, "message": "Let me check the current ETH price to advise you..."}}
 
-- User: "Is it a good time to send BTC?"
-  Response: {{"action": "transfer_advice", "symbol": "btc", "message": "Analyzing BTC price and market conditions..."}}
+- User: "Calculate my portfolio: 2 ETH, 0.5 BTC, 10 SOL"
+  Response: {{"action": "calculate_portfolio", "holdings": {{"eth": 2, "btc": 0.5, "sol": 10}}, "message": "Calculating your portfolio value..."}}
+
+- User: "How much is my crypto worth: 1.5 ETH and 100 USDC"
+  Response: {{"action": "calculate_portfolio", "holdings": {{"eth": 1.5, "usdc": 100}}, "message": "Getting current prices to calculate your portfolio..."}}
 
 - User: "Show me ETH and BTC prices for a transfer"
   Response: {{"action": "get_multiple_prices", "symbols": ["eth", "btc"], "message": "Getting prices for your transfer decision..."}}
@@ -1747,6 +1754,117 @@ Keep advice practical and concise."""
                         
                 except Exception as e:
                     ai_json["error"] = f"Error generating transfer advice: {str(e)}"
+        
+        elif action == "calculate_portfolio":
+            holdings = ai_json.get("holdings", {})
+            
+            if not holdings:
+                ai_json["error"] = "No holdings provided for portfolio calculation"
+            else:
+                try:
+                    # Obtener símbolos válidos
+                    valid_holdings = {k.lower(): v for k, v in holdings.items() if k.lower() in PRICE_FEEDS}
+                    
+                    if not valid_holdings:
+                        ai_json["error"] = "No valid cryptocurrencies found in portfolio"
+                    else:
+                        # Construir lista de IDs para Hermes
+                        price_ids = [PRICE_FEEDS[symbol] for symbol in valid_holdings.keys()]
+                        
+                        # Obtener precios de todas las criptos del portfolio
+                        hermes_url = f"{PYTH_HERMES_URL}/v2/updates/price/latest"
+                        params = [("ids[]", price_id) for price_id in price_ids]
+                        
+                        price_response = requests.get(hermes_url, params=params, timeout=10)
+                        price_response.raise_for_status()
+                        
+                        price_json = price_response.json()
+                        
+                        if price_json.get("parsed") and len(price_json["parsed"]) > 0:
+                            portfolio_items = []
+                            total_value_usd = 0
+                            
+                            for price_feed in price_json["parsed"]:
+                                price_data = price_feed["price"]
+                                feed_id = price_feed["id"]
+                                
+                                # Calcular precio
+                                price_raw = int(price_data["price"])
+                                expo = int(price_data["expo"])
+                                price = price_raw * (10 ** expo)
+                                
+                                # Encontrar símbolo y cantidad
+                                symbol = next((k for k, v in PRICE_FEEDS.items() if v == feed_id), None)
+                                if symbol and symbol in valid_holdings:
+                                    amount = valid_holdings[symbol]
+                                    value_usd = price * amount
+                                    total_value_usd += value_usd
+                                    
+                                    portfolio_items.append({
+                                        "symbol": symbol.upper(),
+                                        "amount": amount,
+                                        "price": float(price),
+                                        "price_usd": f"${price:.2f}",
+                                        "value_usd": float(value_usd),
+                                        "value_formatted": f"${value_usd:,.2f}"
+                                    })
+                            
+                            if len(portfolio_items) == 0:
+                                ai_json["error"] = "No price data available for the cryptocurrencies in your portfolio"
+                            else:
+                                # Calcular porcentajes
+                                for item in portfolio_items:
+                                    item["percentage"] = (item["value_usd"] / total_value_usd * 100) if total_value_usd > 0 else 0
+                                    item["percentage_formatted"] = f"{item['percentage']:.2f}%"
+                                
+                                # Ordenar por valor descendente
+                                portfolio_items.sort(key=lambda x: x["value_usd"], reverse=True)
+                                
+                                # Generar resumen con IA solo si hay items
+                                summary_text = ""
+                                if len(portfolio_items) > 0:
+                                    try:
+                                        summary_prompt = f"""Based on this crypto portfolio analysis:
+- Total Value: ${total_value_usd:,.2f}
+- Holdings: {len(portfolio_items)} different cryptocurrencies
+- Top holding: {portfolio_items[0]['symbol']} ({portfolio_items[0]['percentage_formatted']})
+
+Provide a brief summary (2-3 sentences) about:
+1. Portfolio diversification quality
+2. Risk level based on distribution
+3. Any quick recommendation"""
+
+                                        summary_payload = {
+                                            "model": "deepseek-chat",
+                                            "messages": [
+                                                {"role": "system", "content": "You are a crypto portfolio advisor. Provide brief, actionable insights."},
+                                                {"role": "user", "content": summary_prompt}
+                                            ],
+                                            "temperature": 0.7,
+                                            "max_tokens": 150
+                                        }
+                                        
+                                        summary_response = requests.post(DEEPSEEK_URL, headers=headers, json=summary_payload, timeout=30)
+                                        summary_response.raise_for_status()
+                                        summary_result = summary_response.json()
+                                        summary_text = summary_result["choices"][0]["message"]["content"].strip()
+                                    except:
+                                        summary_text = "Portfolio calculated successfully. Review your holdings distribution above."
+                                
+                                ai_json["portfolio"] = {
+                                    "total_value_usd": float(total_value_usd),
+                                    "total_value_formatted": f"${total_value_usd:,.2f}",
+                                    "holdings_count": len(portfolio_items),
+                                    "items": portfolio_items
+                                }
+                                
+                                ai_json["summary"] = summary_text
+                                ai_json["message"] = f"Portfolio calculated: {len(portfolio_items)} assets worth ${total_value_usd:,.2f} USD"
+                        else:
+                            ai_json["error"] = "No price data received from Pyth Network"
+                            
+                except Exception as e:
+                    ai_json["error"] = f"Error calculating portfolio: {str(e)}"
         
         elif action == "advice":
             # Consejo general sin precio específico
