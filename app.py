@@ -1202,6 +1202,138 @@ def update_transaccion(transaccion_id):
         }), 500
 
 
+# ======================================
+# 📇 ENDPOINTS DE CONTACT_WALLETS
+# ======================================
+
+@app.route("/contact-wallets", methods=["POST"])
+def add_contact_wallet():
+    """Agrega un nuevo contacto a la tabla contact_wallets."""
+    try:
+        if not supabase:
+            return jsonify({
+                "error": "Supabase no está configurado. Verifica las variables SUPABASE_URL y SUPABASE_KEY"
+            }), 500
+        
+        data = request.get_json()
+        nombre_wallet_agregada = data.get("nombre_wallet_agregada")
+        wallet_agregada = data.get("wallet_agregada")
+        wallet_quien_agrego = data.get("wallet_quien_agrego")
+        
+        # Validaciones
+        if not nombre_wallet_agregada or not wallet_agregada or not wallet_quien_agrego:
+            return jsonify({
+                "success": False,
+                "error": "Se requieren nombre_wallet_agregada, wallet_agregada y wallet_quien_agrego"
+            }), 400
+        
+        if not Web3.is_address(wallet_agregada):
+            return jsonify({
+                "success": False,
+                "error": "wallet_agregada inválida. Debe ser una dirección Ethereum válida (0x...)"
+            }), 400
+        
+        if not Web3.is_address(wallet_quien_agrego):
+            return jsonify({
+                "success": False,
+                "error": "wallet_quien_agrego inválida. Debe ser una dirección Ethereum válida (0x...)"
+            }), 400
+        
+        # Normalizar a checksum address
+        wallet_agregada = Web3.to_checksum_address(wallet_agregada)
+        wallet_quien_agrego = Web3.to_checksum_address(wallet_quien_agrego)
+        
+        # Crear contacto en contact_wallets
+        response = supabase.table("contact_wallets").insert({
+            "nombre_wallet_agregada": nombre_wallet_agregada,
+            "wallet_agregada": wallet_agregada,
+            "wallet_quien_agrego": wallet_quien_agrego
+        }).execute()
+        
+        return jsonify({
+            "success": True,
+            "message": "Contacto agregado correctamente",
+            "contact": response.data[0]
+        }), 201
+        
+    except Exception as e:
+        error_message = str(e)
+        if "duplicate key value" in error_message:
+            return jsonify({
+                "success": False,
+                "error": "Este contacto ya existe"
+            }), 409
+        return jsonify({
+            "success": False,
+            "error": error_message
+        }), 500
+
+
+@app.route("/contact-wallets/<wallet_address>", methods=["GET"])
+def get_contact_wallets(wallet_address):
+    """Obtiene todos los contactos agregados por una wallet específica."""
+    try:
+        if not supabase:
+            return jsonify({
+                "error": "Supabase no está configurado. Verifica las variables SUPABASE_URL y SUPABASE_KEY"
+            }), 500
+        
+        # Validar formato de wallet
+        if not Web3.is_address(wallet_address):
+            return jsonify({
+                "success": False,
+                "error": "Dirección de wallet inválida"
+            }), 400
+        
+        # Normalizar a checksum address
+        wallet_address = Web3.to_checksum_address(wallet_address)
+        
+        # Obtener contactos de la wallet
+        response = supabase.table("contact_wallets").select("*").eq(
+            "wallet_quien_agrego", wallet_address
+        ).order("fecha_creacion", desc=True).execute()
+        
+        return jsonify({
+            "success": True,
+            "wallet": wallet_address,
+            "count": len(response.data),
+            "contacts": response.data
+        })
+        
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+
+@app.route("/contact-wallets", methods=["GET"])
+def get_all_contact_wallets():
+    """Obtiene todos los contactos de la tabla contact_wallets."""
+    try:
+        if not supabase:
+            return jsonify({
+                "error": "Supabase no está configurado. Verifica las variables SUPABASE_URL y SUPABASE_KEY"
+            }), 500
+        
+        # Obtener todos los contactos
+        response = supabase.table("contact_wallets").select("*").order(
+            "fecha_creacion", desc=True
+        ).execute()
+        
+        return jsonify({
+            "success": True,
+            "count": len(response.data),
+            "contacts": response.data
+        })
+        
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+
 # ==========================
 # 🚀 Ejecutar servidor Flask
 # ==========================
