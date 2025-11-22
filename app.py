@@ -1338,8 +1338,8 @@ def get_all_contact_wallets():
 # 💹 ENDPOINTS DE PYTH NETWORK - PRECIOS EN TIEMPO REAL
 # ======================================
 
-# Pyth Network Contract Address en Scroll Sepolia
-PYTH_CONTRACT_ADDRESS = "0xA2aa501b19aff244D90cc15a4Cf739D2725B5729"
+# Pyth Hermes API URL
+PYTH_HERMES_URL = "https://hermes.pyth.network"
 
 # Price Feed IDs más comunes (Pyth Network)
 PRICE_FEEDS = {
@@ -1351,11 +1351,13 @@ PRICE_FEEDS = {
     "sol": "0xef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d",   # SOL/USD
     "matic": "0x5de33a9112c2b700b8d30b8a3402c103578ccfa2765696471cc672bd5cf6ac52", # MATIC/USD
     "avax": "0x93da3352f9f1d105fdfe4971cfa80e9dd777bfc5d0f683ebb6e1294b92137bb7",  # AVAX/USD
+    "ada": "0x2a01deaec9e51a579277b34b122399984d0bbf57e2458a7e42fecd2829867a0d",   # ADA/USD
+    "doge": "0xdcef50dd0a4cd2dcc17e45df1676dcb336a11a61c69df7a0299b0150c672d25c",  # DOGE/USD
 }
 
 @app.route("/pyth/price/<symbol>", methods=["GET"])
 def get_pyth_price(symbol):
-    """Obtiene el precio en tiempo real de Pyth Network."""
+    """Obtiene el precio en tiempo real de Pyth Network usando Hermes API."""
     try:
         symbol_lower = symbol.lower()
         
@@ -1368,54 +1370,33 @@ def get_pyth_price(symbol):
         
         price_feed_id = PRICE_FEEDS[symbol_lower]
         
-        # ABI simplificado para getPriceNoOlderThan
-        pyth_abi = [
-            {
-                "inputs": [
-                    {"internalType": "bytes32", "name": "id", "type": "bytes32"},
-                    {"internalType": "uint256", "name": "age", "type": "uint256"}
-                ],
-                "name": "getPriceNoOlderThan",
-                "outputs": [
-                    {
-                        "components": [
-                            {"internalType": "int64", "name": "price", "type": "int64"},
-                            {"internalType": "uint64", "name": "conf", "type": "uint64"},
-                            {"internalType": "int32", "name": "expo", "type": "int32"},
-                            {"internalType": "uint256", "name": "publishTime", "type": "uint256"}
-                        ],
-                        "internalType": "struct PythStructs.Price",
-                        "name": "price",
-                        "type": "tuple"
-                    }
-                ],
-                "stateMutability": "view",
-                "type": "function"
-            }
-        ]
+        # Llamar a Hermes API
+        hermes_url = f"{PYTH_HERMES_URL}/v2/updates/price/latest"
+        params = {"ids[]": price_feed_id}
         
-        # Crear instancia del contrato Pyth
-        pyth_contract = w3.eth.contract(
-            address=Web3.to_checksum_address(PYTH_CONTRACT_ADDRESS),
-            abi=pyth_abi
-        )
+        response = requests.get(hermes_url, params=params, timeout=10)
+        response.raise_for_status()
         
-        # Obtener precio (no más viejo de 60 segundos)
-        max_age = 60  # segundos
-        price_data = pyth_contract.functions.getPriceNoOlderThan(
-            bytes.fromhex(price_feed_id[2:]),  # Remover '0x'
-            max_age
-        ).call()
+        data = response.json()
         
-        # Parsear datos
-        price_raw = price_data[0]  # int64
-        conf = price_data[1]       # uint64
-        expo = price_data[2]       # int32
-        publish_time = price_data[3]  # uint256
+        if not data.get("parsed"):
+            return jsonify({
+                "success": False,
+                "error": "No price data available"
+            }), 404
+        
+        # Parsear datos del precio
+        price_feed = data["parsed"][0]
+        price_data = price_feed["price"]
         
         # Calcular precio real
+        price_raw = int(price_data["price"])
+        expo = int(price_data["expo"])
         price = price_raw * (10 ** expo)
-        confidence = conf * (10 ** expo)
+        
+        # Calcular confianza
+        conf_raw = int(price_data["conf"])
+        confidence = conf_raw * (10 ** expo)
         
         return jsonify({
             "success": True,
@@ -1423,22 +1404,26 @@ def get_pyth_price(symbol):
             "price": float(price),
             "confidence": float(confidence),
             "expo": expo,
-            "publish_time": publish_time,
+            "publish_time": price_data["publish_time"],
             "price_feed_id": price_feed_id,
-            "network": NETWORK,
             "message": f"Current {symbol.upper()} price: ${price:.2f} USD"
         })
         
+    except requests.exceptions.RequestException as e:
+        return jsonify({
+            "success": False,
+            "error": f"Error fetching price from Hermes API: {str(e)}"
+        }), 500
     except Exception as e:
         return jsonify({
             "success": False,
-            "error": f"Error fetching price: {str(e)}"
+            "error": f"Error processing price data: {str(e)}"
         }), 500
 
 
 @app.route("/pyth/prices", methods=["GET"])
 def get_multiple_prices():
-    """Obtiene precios de múltiples criptomonedas."""
+    """Obtiene precios de múltiples criptomonedas usando Hermes API."""
     try:
         symbols = request.args.get("symbols", "eth,btc").split(",")
         max_symbols = 10
@@ -1449,54 +1434,46 @@ def get_multiple_prices():
                 "error": f"Maximum {max_symbols} symbols allowed"
             }), 400
         
-        results = []
-        errors = []
+        # Construir lista de IDs para Hermes
+        price_ids = []
+        symbol_map = {}
         
         for symbol in symbols:
             symbol = symbol.strip().lower()
             if symbol in PRICE_FEEDS:
+                price_ids.append(PRICE_FEEDS[symbol])
+                symbol_map[PRICE_FEEDS[symbol]] = symbol
+        
+        if not price_ids:
+            return jsonify({
+                "success": False,
+                "error": "No valid symbols provided"
+            }), 400
+        
+        # Llamar a Hermes API con múltiples IDs
+        hermes_url = f"{PYTH_HERMES_URL}/v2/updates/price/latest"
+        params = [("ids[]", price_id) for price_id in price_ids]
+        
+        response = requests.get(hermes_url, params=params, timeout=10)
+        response.raise_for_status()
+        
+        data = response.json()
+        
+        results = []
+        errors = []
+        
+        if data.get("parsed"):
+            for price_feed in data["parsed"]:
                 try:
-                    # Obtener precio individualmente
-                    price_feed_id = PRICE_FEEDS[symbol]
+                    price_data = price_feed["price"]
+                    feed_id = price_feed["id"]
                     
-                    pyth_abi = [
-                        {
-                            "inputs": [
-                                {"internalType": "bytes32", "name": "id", "type": "bytes32"},
-                                {"internalType": "uint256", "name": "age", "type": "uint256"}
-                            ],
-                            "name": "getPriceNoOlderThan",
-                            "outputs": [
-                                {
-                                    "components": [
-                                        {"internalType": "int64", "name": "price", "type": "int64"},
-                                        {"internalType": "uint64", "name": "conf", "type": "uint64"},
-                                        {"internalType": "int32", "name": "expo", "type": "int32"},
-                                        {"internalType": "uint256", "name": "publishTime", "type": "uint256"}
-                                    ],
-                                    "internalType": "struct PythStructs.Price",
-                                    "name": "price",
-                                    "type": "tuple"
-                                }
-                            ],
-                            "stateMutability": "view",
-                            "type": "function"
-                        }
-                    ]
-                    
-                    pyth_contract = w3.eth.contract(
-                        address=Web3.to_checksum_address(PYTH_CONTRACT_ADDRESS),
-                        abi=pyth_abi
-                    )
-                    
-                    price_data = pyth_contract.functions.getPriceNoOlderThan(
-                        bytes.fromhex(price_feed_id[2:]),
-                        60
-                    ).call()
-                    
-                    price_raw = price_data[0]
-                    expo = price_data[2]
+                    # Calcular precio real
+                    price_raw = int(price_data["price"])
+                    expo = int(price_data["expo"])
                     price = price_raw * (10 ** expo)
+                    
+                    symbol = symbol_map.get(feed_id, "UNKNOWN")
                     
                     results.append({
                         "symbol": symbol.upper(),
@@ -1505,14 +1482,9 @@ def get_multiple_prices():
                     })
                 except Exception as e:
                     errors.append({
-                        "symbol": symbol.upper(),
+                        "symbol": symbol_map.get(feed_id, "UNKNOWN").upper(),
                         "error": str(e)
                     })
-            else:
-                errors.append({
-                    "symbol": symbol.upper(),
-                    "error": "Symbol not supported"
-                })
         
         return jsonify({
             "success": True,
@@ -1521,6 +1493,11 @@ def get_multiple_prices():
             "errors": errors if errors else None
         })
         
+    except requests.exceptions.RequestException as e:
+        return jsonify({
+            "success": False,
+            "error": f"Error fetching prices from Hermes API: {str(e)}"
+        }), 500
     except Exception as e:
         return jsonify({
             "success": False,
@@ -1615,52 +1592,30 @@ Always respond in English and with valid JSON only."""
                 try:
                     price_feed_id = PRICE_FEEDS[symbol]
                     
-                    pyth_abi = [
-                        {
-                            "inputs": [
-                                {"internalType": "bytes32", "name": "id", "type": "bytes32"},
-                                {"internalType": "uint256", "name": "age", "type": "uint256"}
-                            ],
-                            "name": "getPriceNoOlderThan",
-                            "outputs": [
-                                {
-                                    "components": [
-                                        {"internalType": "int64", "name": "price", "type": "int64"},
-                                        {"internalType": "uint64", "name": "conf", "type": "uint64"},
-                                        {"internalType": "int32", "name": "expo", "type": "int32"},
-                                        {"internalType": "uint256", "name": "publishTime", "type": "uint256"}
-                                    ],
-                                    "internalType": "struct PythStructs.Price",
-                                    "name": "price",
-                                    "type": "tuple"
-                                }
-                            ],
-                            "stateMutability": "view",
-                            "type": "function"
+                    # Llamar a Hermes API
+                    hermes_url = f"{PYTH_HERMES_URL}/v2/updates/price/latest"
+                    params = {"ids[]": price_feed_id}
+                    
+                    price_response = requests.get(hermes_url, params=params, timeout=10)
+                    price_response.raise_for_status()
+                    
+                    price_json = price_response.json()
+                    
+                    if price_json.get("parsed"):
+                        price_feed = price_json["parsed"][0]
+                        price_data = price_feed["price"]
+                        
+                        price_raw = int(price_data["price"])
+                        expo = int(price_data["expo"])
+                        price = price_raw * (10 ** expo)
+                        
+                        ai_json["price_data"] = {
+                            "symbol": symbol.upper(),
+                            "price": float(price),
+                            "price_usd": f"${price:.2f}",
+                            "source": "Pyth Network (Hermes API)"
                         }
-                    ]
-                    
-                    pyth_contract = w3.eth.contract(
-                        address=Web3.to_checksum_address(PYTH_CONTRACT_ADDRESS),
-                        abi=pyth_abi
-                    )
-                    
-                    price_data = pyth_contract.functions.getPriceNoOlderThan(
-                        bytes.fromhex(price_feed_id[2:]),
-                        60
-                    ).call()
-                    
-                    price_raw = price_data[0]
-                    expo = price_data[2]
-                    price = price_raw * (10 ** expo)
-                    
-                    ai_json["price_data"] = {
-                        "symbol": symbol.upper(),
-                        "price": float(price),
-                        "price_usd": f"${price:.2f}",
-                        "source": "Pyth Network"
-                    }
-                    ai_json["message"] = f"The current price of {symbol.upper()} is ${price:.2f} USD"
+                        ai_json["message"] = f"The current price of {symbol.upper()} is ${price:.2f} USD"
                 except Exception as e:
                     ai_json["error"] = f"Error fetching price: {str(e)}"
         
@@ -1668,62 +1623,43 @@ Always respond in English and with valid JSON only."""
             symbols = ai_json.get("symbols", [])
             prices_result = []
             
-            for symbol in symbols:
-                symbol = symbol.lower()
-                if symbol in PRICE_FEEDS:
-                    try:
-                        price_feed_id = PRICE_FEEDS[symbol]
-                        
-                        pyth_abi = [
-                            {
-                                "inputs": [
-                                    {"internalType": "bytes32", "name": "id", "type": "bytes32"},
-                                    {"internalType": "uint256", "name": "age", "type": "uint256"}
-                                ],
-                                "name": "getPriceNoOlderThan",
-                                "outputs": [
-                                    {
-                                        "components": [
-                                            {"internalType": "int64", "name": "price", "type": "int64"},
-                                            {"internalType": "uint64", "name": "conf", "type": "uint64"},
-                                            {"internalType": "int32", "name": "expo", "type": "int32"},
-                                            {"internalType": "uint256", "name": "publishTime", "type": "uint256"}
-                                        ],
-                                        "internalType": "struct PythStructs.Price",
-                                        "name": "price",
-                                        "type": "tuple"
-                                    }
-                                ],
-                                "stateMutability": "view",
-                                "type": "function"
-                            }
-                        ]
-                        
-                        pyth_contract = w3.eth.contract(
-                            address=Web3.to_checksum_address(PYTH_CONTRACT_ADDRESS),
-                            abi=pyth_abi
-                        )
-                        
-                        price_data = pyth_contract.functions.getPriceNoOlderThan(
-                            bytes.fromhex(price_feed_id[2:]),
-                            60
-                        ).call()
-                        
-                        price_raw = price_data[0]
-                        expo = price_data[2]
-                        price = price_raw * (10 ** expo)
-                        
-                        prices_result.append({
-                            "symbol": symbol.upper(),
-                            "price": float(price),
-                            "price_usd": f"${price:.2f}"
-                        })
-                    except:
-                        pass
+            # Construir lista de IDs
+            price_ids = [PRICE_FEEDS[s.lower()] for s in symbols if s.lower() in PRICE_FEEDS]
+            
+            if price_ids:
+                try:
+                    hermes_url = f"{PYTH_HERMES_URL}/v2/updates/price/latest"
+                    params = [("ids[]", price_id) for price_id in price_ids]
+                    
+                    price_response = requests.get(hermes_url, params=params, timeout=10)
+                    price_response.raise_for_status()
+                    
+                    price_json = price_response.json()
+                    
+                    if price_json.get("parsed"):
+                        for price_feed in price_json["parsed"]:
+                            price_data = price_feed["price"]
+                            feed_id = price_feed["id"]
+                            
+                            price_raw = int(price_data["price"])
+                            expo = int(price_data["expo"])
+                            price = price_raw * (10 ** expo)
+                            
+                            # Encontrar símbolo por feed_id
+                            symbol = next((k for k, v in PRICE_FEEDS.items() if v == feed_id), "UNKNOWN")
+                            
+                            prices_result.append({
+                                "symbol": symbol.upper(),
+                                "price": float(price),
+                                "price_usd": f"${price:.2f}"
+                            })
+                except Exception as e:
+                    ai_json["error"] = f"Error fetching prices: {str(e)}"
             
             ai_json["prices"] = prices_result
-            price_list = ", ".join([f"{p['symbol']}: {p['price_usd']}" for p in prices_result])
-            ai_json["message"] = f"Current prices - {price_list}"
+            if prices_result:
+                price_list = ", ".join([f"{p['symbol']}: {p['price_usd']}" for p in prices_result])
+                ai_json["message"] = f"Current prices - {price_list}"
         
         return jsonify(ai_json)
         
