@@ -1527,31 +1527,43 @@ def pyth_chat_ai():
         # Obtener precios actuales para contexto
         available_symbols = list(PRICE_FEEDS.keys())
         
-        # Prompt para la IA (en inglés)
-        system_prompt = f"""You are a cryptocurrency price assistant. You help users get real-time cryptocurrency prices using Pyth Network.
+        # Prompt mejorado para la IA (en inglés con consejos de transferencia)
+        system_prompt = f"""You are an expert cryptocurrency advisor and price assistant. You help users get real-time cryptocurrency prices using Pyth Network and provide smart advice for making transfers and transactions.
 
 Available cryptocurrencies: {', '.join([s.upper() for s in available_symbols])}
 
-When users ask about prices:
-1. Identify which cryptocurrency they want to know about
-2. Return a JSON response with this structure:
-   {{"action": "get_price", "symbol": "eth", "message": "Getting ETH price..."}}
+Your capabilities:
+1. Get real-time cryptocurrency prices
+2. Provide advice on the best time to transfer based on current prices
+3. Give recommendations on transaction strategies
+4. Help users understand market conditions
 
-3. If they ask about multiple cryptocurrencies:
-   {{"action": "get_multiple_prices", "symbols": ["eth", "btc"], "message": "Getting prices..."}}
+Response formats:
 
-4. If the request is unclear or about an unsupported cryptocurrency:
-   {{"action": "none", "message": "Please specify a valid cryptocurrency: {', '.join([s.upper() for s in available_symbols])}"}}
+**For price queries:**
+{{"action": "get_price", "symbol": "eth", "message": "Getting ETH price..."}}
+
+**For multiple prices:**
+{{"action": "get_multiple_prices", "symbols": ["eth", "btc"], "message": "Getting prices..."}}
+
+**For transfer advice (after getting prices):**
+{{"action": "transfer_advice", "symbol": "eth", "amount": 0.5, "message": "Analyzing transfer conditions..."}}
+
+**For general advice:**
+{{"action": "advice", "message": "Your personalized advice here..."}}
 
 Examples:
 - User: "What's the price of ETH?"
   Response: {{"action": "get_price", "symbol": "eth", "message": "Fetching current ETH price..."}}
 
-- User: "Show me BTC and ETH prices"
-  Response: {{"action": "get_multiple_prices", "symbols": ["btc", "eth"], "message": "Fetching multiple prices..."}}
+- User: "Should I transfer 0.5 ETH now?"
+  Response: {{"action": "transfer_advice", "symbol": "eth", "amount": 0.5, "message": "Let me check the current ETH price to advise you..."}}
 
-- User: "How much is Ethereum worth?"
-  Response: {{"action": "get_price", "symbol": "eth", "message": "Getting Ethereum price..."}}
+- User: "Is it a good time to send BTC?"
+  Response: {{"action": "transfer_advice", "symbol": "btc", "message": "Analyzing BTC price and market conditions..."}}
+
+- User: "Show me ETH and BTC prices for a transfer"
+  Response: {{"action": "get_multiple_prices", "symbols": ["eth", "btc"], "message": "Getting prices for your transfer decision..."}}
 
 Always respond in English and with valid JSON only."""
 
@@ -1660,6 +1672,85 @@ Always respond in English and with valid JSON only."""
             if prices_result:
                 price_list = ", ".join([f"{p['symbol']}: {p['price_usd']}" for p in prices_result])
                 ai_json["message"] = f"Current prices - {price_list}"
+        
+        elif action == "transfer_advice":
+            symbol = ai_json.get("symbol", "").lower()
+            amount = ai_json.get("amount", 0)
+            
+            if symbol in PRICE_FEEDS:
+                try:
+                    price_feed_id = PRICE_FEEDS[symbol]
+                    
+                    # Obtener precio actual
+                    hermes_url = f"{PYTH_HERMES_URL}/v2/updates/price/latest"
+                    params = {"ids[]": price_feed_id}
+                    
+                    price_response = requests.get(hermes_url, params=params, timeout=10)
+                    price_response.raise_for_status()
+                    
+                    price_json = price_response.json()
+                    
+                    if price_json.get("parsed"):
+                        price_feed = price_json["parsed"][0]
+                        price_data = price_feed["price"]
+                        
+                        price_raw = int(price_data["price"])
+                        expo = int(price_data["expo"])
+                        price = price_raw * (10 ** expo)
+                        conf_raw = int(price_data["conf"])
+                        confidence = conf_raw * (10 ** expo)
+                        
+                        # Calcular valor de la transferencia
+                        transfer_value_usd = price * amount if amount > 0 else 0
+                        
+                        # Generar consejo con IA
+                        advice_prompt = f"""Based on the current {symbol.upper()} price of ${price:.2f} USD with a confidence interval of ±${confidence:.2f}, provide brief advice (2-3 sentences) about:
+1. Whether it's a good time to transfer {amount if amount > 0 else 'some'} {symbol.upper()}
+2. Any considerations about transaction fees (gas fees on Scroll Sepolia are typically low, ~$0.01-0.10)
+3. Market volatility considerations
+
+Keep advice practical and concise."""
+
+                        advice_payload = {
+                            "model": "deepseek-chat",
+                            "messages": [
+                                {"role": "system", "content": "You are a cryptocurrency advisor. Provide brief, practical advice."},
+                                {"role": "user", "content": advice_prompt}
+                            ],
+                            "temperature": 0.7,
+                            "max_tokens": 200
+                        }
+                        
+                        advice_response = requests.post(DEEPSEEK_URL, headers=headers, json=advice_payload, timeout=30)
+                        advice_response.raise_for_status()
+                        advice_result = advice_response.json()
+                        advice_text = advice_result["choices"][0]["message"]["content"].strip()
+                        
+                        ai_json["price_data"] = {
+                            "symbol": symbol.upper(),
+                            "price": float(price),
+                            "price_usd": f"${price:.2f}",
+                            "confidence": float(confidence),
+                            "confidence_usd": f"±${confidence:.2f}",
+                            "source": "Pyth Network (Hermes API)"
+                        }
+                        
+                        ai_json["transfer_info"] = {
+                            "amount": amount,
+                            "estimated_value_usd": f"${transfer_value_usd:.2f}" if amount > 0 else "N/A",
+                            "estimated_gas_fee": "$0.01 - $0.10 (Scroll Sepolia)",
+                            "network": "Scroll Sepolia Testnet"
+                        }
+                        
+                        ai_json["advice"] = advice_text
+                        ai_json["message"] = f"Current {symbol.upper()} price: ${price:.2f} USD. Analysis complete."
+                        
+                except Exception as e:
+                    ai_json["error"] = f"Error generating transfer advice: {str(e)}"
+        
+        elif action == "advice":
+            # Consejo general sin precio específico
+            ai_json["message"] = ai_json.get("message", "Please specify which cryptocurrency you want advice about.")
         
         return jsonify(ai_json)
         
