@@ -1334,6 +1334,417 @@ def get_all_contact_wallets():
         }), 500
 
 
+# ======================================
+# 💹 ENDPOINTS DE PYTH NETWORK - PRECIOS EN TIEMPO REAL
+# ======================================
+
+# Pyth Network Contract Address en Scroll Sepolia
+PYTH_CONTRACT_ADDRESS = "0xA2aa501b19aff244D90cc15a4Cf739D2725B5729"
+
+# Price Feed IDs más comunes (Pyth Network)
+PRICE_FEEDS = {
+    "eth": "0xff61491a931112ddf1bd8147cd1b641375f79f5825126d665480874634fd0ace",  # ETH/USD
+    "btc": "0xe62df6c8b4a85fe1a67db44dc12de5db330f7ac66b72dc658afedf0f4a415b43",  # BTC/USD
+    "usdc": "0xeaa020c61cc479712813461ce153894a96a6c00b21ed0cfc2798d1f9a9e9c94a",  # USDC/USD
+    "usdt": "0x2b89b9dc8fdf9f34709a5b106b472f0f39bb6ca9ce04b0fd7f2e971688e2e53b",  # USDT/USD
+    "bnb": "0x2f95862b045670cd22bee3114c39763a4a08beeb663b145d283c31d7d1101c4f",   # BNB/USD
+    "sol": "0xef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d",   # SOL/USD
+    "matic": "0x5de33a9112c2b700b8d30b8a3402c103578ccfa2765696471cc672bd5cf6ac52", # MATIC/USD
+    "avax": "0x93da3352f9f1d105fdfe4971cfa80e9dd777bfc5d0f683ebb6e1294b92137bb7",  # AVAX/USD
+}
+
+@app.route("/pyth/price/<symbol>", methods=["GET"])
+def get_pyth_price(symbol):
+    """Obtiene el precio en tiempo real de Pyth Network."""
+    try:
+        symbol_lower = symbol.lower()
+        
+        # Verificar si el símbolo existe
+        if symbol_lower not in PRICE_FEEDS:
+            return jsonify({
+                "success": False,
+                "error": f"Symbol '{symbol}' not supported. Available: {', '.join(PRICE_FEEDS.keys())}"
+            }), 400
+        
+        price_feed_id = PRICE_FEEDS[symbol_lower]
+        
+        # ABI simplificado para getPriceNoOlderThan
+        pyth_abi = [
+            {
+                "inputs": [
+                    {"internalType": "bytes32", "name": "id", "type": "bytes32"},
+                    {"internalType": "uint256", "name": "age", "type": "uint256"}
+                ],
+                "name": "getPriceNoOlderThan",
+                "outputs": [
+                    {
+                        "components": [
+                            {"internalType": "int64", "name": "price", "type": "int64"},
+                            {"internalType": "uint64", "name": "conf", "type": "uint64"},
+                            {"internalType": "int32", "name": "expo", "type": "int32"},
+                            {"internalType": "uint256", "name": "publishTime", "type": "uint256"}
+                        ],
+                        "internalType": "struct PythStructs.Price",
+                        "name": "price",
+                        "type": "tuple"
+                    }
+                ],
+                "stateMutability": "view",
+                "type": "function"
+            }
+        ]
+        
+        # Crear instancia del contrato Pyth
+        pyth_contract = w3.eth.contract(
+            address=Web3.to_checksum_address(PYTH_CONTRACT_ADDRESS),
+            abi=pyth_abi
+        )
+        
+        # Obtener precio (no más viejo de 60 segundos)
+        max_age = 60  # segundos
+        price_data = pyth_contract.functions.getPriceNoOlderThan(
+            bytes.fromhex(price_feed_id[2:]),  # Remover '0x'
+            max_age
+        ).call()
+        
+        # Parsear datos
+        price_raw = price_data[0]  # int64
+        conf = price_data[1]       # uint64
+        expo = price_data[2]       # int32
+        publish_time = price_data[3]  # uint256
+        
+        # Calcular precio real
+        price = price_raw * (10 ** expo)
+        confidence = conf * (10 ** expo)
+        
+        return jsonify({
+            "success": True,
+            "symbol": symbol.upper(),
+            "price": float(price),
+            "confidence": float(confidence),
+            "expo": expo,
+            "publish_time": publish_time,
+            "price_feed_id": price_feed_id,
+            "network": NETWORK,
+            "message": f"Current {symbol.upper()} price: ${price:.2f} USD"
+        })
+        
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": f"Error fetching price: {str(e)}"
+        }), 500
+
+
+@app.route("/pyth/prices", methods=["GET"])
+def get_multiple_prices():
+    """Obtiene precios de múltiples criptomonedas."""
+    try:
+        symbols = request.args.get("symbols", "eth,btc").split(",")
+        max_symbols = 10
+        
+        if len(symbols) > max_symbols:
+            return jsonify({
+                "success": False,
+                "error": f"Maximum {max_symbols} symbols allowed"
+            }), 400
+        
+        results = []
+        errors = []
+        
+        for symbol in symbols:
+            symbol = symbol.strip().lower()
+            if symbol in PRICE_FEEDS:
+                try:
+                    # Obtener precio individualmente
+                    price_feed_id = PRICE_FEEDS[symbol]
+                    
+                    pyth_abi = [
+                        {
+                            "inputs": [
+                                {"internalType": "bytes32", "name": "id", "type": "bytes32"},
+                                {"internalType": "uint256", "name": "age", "type": "uint256"}
+                            ],
+                            "name": "getPriceNoOlderThan",
+                            "outputs": [
+                                {
+                                    "components": [
+                                        {"internalType": "int64", "name": "price", "type": "int64"},
+                                        {"internalType": "uint64", "name": "conf", "type": "uint64"},
+                                        {"internalType": "int32", "name": "expo", "type": "int32"},
+                                        {"internalType": "uint256", "name": "publishTime", "type": "uint256"}
+                                    ],
+                                    "internalType": "struct PythStructs.Price",
+                                    "name": "price",
+                                    "type": "tuple"
+                                }
+                            ],
+                            "stateMutability": "view",
+                            "type": "function"
+                        }
+                    ]
+                    
+                    pyth_contract = w3.eth.contract(
+                        address=Web3.to_checksum_address(PYTH_CONTRACT_ADDRESS),
+                        abi=pyth_abi
+                    )
+                    
+                    price_data = pyth_contract.functions.getPriceNoOlderThan(
+                        bytes.fromhex(price_feed_id[2:]),
+                        60
+                    ).call()
+                    
+                    price_raw = price_data[0]
+                    expo = price_data[2]
+                    price = price_raw * (10 ** expo)
+                    
+                    results.append({
+                        "symbol": symbol.upper(),
+                        "price": float(price),
+                        "price_usd": f"${price:.2f}"
+                    })
+                except Exception as e:
+                    errors.append({
+                        "symbol": symbol.upper(),
+                        "error": str(e)
+                    })
+            else:
+                errors.append({
+                    "symbol": symbol.upper(),
+                    "error": "Symbol not supported"
+                })
+        
+        return jsonify({
+            "success": True,
+            "count": len(results),
+            "prices": results,
+            "errors": errors if errors else None
+        })
+        
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+
+@app.route("/pyth/chat", methods=["POST"])
+def pyth_chat_ai():
+    """Chat con IA para consultar precios usando Pyth Network (en inglés)."""
+    try:
+        data = request.get_json()
+        user_message = data.get("message", "")
+        
+        if not user_message:
+            return jsonify({
+                "success": False,
+                "error": "Message is required"
+            }), 400
+        
+        if not DEEPSEEK_API_KEY:
+            return jsonify({
+                "success": False,
+                "error": "AI API key not configured"
+            }), 500
+        
+        # Obtener precios actuales para contexto
+        available_symbols = list(PRICE_FEEDS.keys())
+        
+        # Prompt para la IA (en inglés)
+        system_prompt = f"""You are a cryptocurrency price assistant. You help users get real-time cryptocurrency prices using Pyth Network.
+
+Available cryptocurrencies: {', '.join([s.upper() for s in available_symbols])}
+
+When users ask about prices:
+1. Identify which cryptocurrency they want to know about
+2. Return a JSON response with this structure:
+   {{"action": "get_price", "symbol": "eth", "message": "Getting ETH price..."}}
+
+3. If they ask about multiple cryptocurrencies:
+   {{"action": "get_multiple_prices", "symbols": ["eth", "btc"], "message": "Getting prices..."}}
+
+4. If the request is unclear or about an unsupported cryptocurrency:
+   {{"action": "none", "message": "Please specify a valid cryptocurrency: {', '.join([s.upper() for s in available_symbols])}"}}
+
+Examples:
+- User: "What's the price of ETH?"
+  Response: {{"action": "get_price", "symbol": "eth", "message": "Fetching current ETH price..."}}
+
+- User: "Show me BTC and ETH prices"
+  Response: {{"action": "get_multiple_prices", "symbols": ["btc", "eth"], "message": "Fetching multiple prices..."}}
+
+- User: "How much is Ethereum worth?"
+  Response: {{"action": "get_price", "symbol": "eth", "message": "Getting Ethereum price..."}}
+
+Always respond in English and with valid JSON only."""
+
+        # Llamar a DeepSeek
+        headers = {
+            "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
+            "Content-Type": "application/json"
+        }
+        
+        payload = {
+            "model": "deepseek-chat",
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_message}
+            ],
+            "temperature": 0.3,
+            "max_tokens": 500
+        }
+        
+        response = requests.post(DEEPSEEK_URL, headers=headers, json=payload, timeout=30)
+        response.raise_for_status()
+        
+        ai_response = response.json()
+        ai_message = ai_response["choices"][0]["message"]["content"].strip()
+        
+        # Parsear respuesta JSON de la IA
+        try:
+            ai_json = json.loads(ai_message)
+        except:
+            ai_json = {"action": "none", "message": ai_message}
+        
+        # Procesar acciones
+        action = ai_json.get("action", "none")
+        
+        if action == "get_price":
+            symbol = ai_json.get("symbol", "").lower()
+            if symbol in PRICE_FEEDS:
+                try:
+                    price_feed_id = PRICE_FEEDS[symbol]
+                    
+                    pyth_abi = [
+                        {
+                            "inputs": [
+                                {"internalType": "bytes32", "name": "id", "type": "bytes32"},
+                                {"internalType": "uint256", "name": "age", "type": "uint256"}
+                            ],
+                            "name": "getPriceNoOlderThan",
+                            "outputs": [
+                                {
+                                    "components": [
+                                        {"internalType": "int64", "name": "price", "type": "int64"},
+                                        {"internalType": "uint64", "name": "conf", "type": "uint64"},
+                                        {"internalType": "int32", "name": "expo", "type": "int32"},
+                                        {"internalType": "uint256", "name": "publishTime", "type": "uint256"}
+                                    ],
+                                    "internalType": "struct PythStructs.Price",
+                                    "name": "price",
+                                    "type": "tuple"
+                                }
+                            ],
+                            "stateMutability": "view",
+                            "type": "function"
+                        }
+                    ]
+                    
+                    pyth_contract = w3.eth.contract(
+                        address=Web3.to_checksum_address(PYTH_CONTRACT_ADDRESS),
+                        abi=pyth_abi
+                    )
+                    
+                    price_data = pyth_contract.functions.getPriceNoOlderThan(
+                        bytes.fromhex(price_feed_id[2:]),
+                        60
+                    ).call()
+                    
+                    price_raw = price_data[0]
+                    expo = price_data[2]
+                    price = price_raw * (10 ** expo)
+                    
+                    ai_json["price_data"] = {
+                        "symbol": symbol.upper(),
+                        "price": float(price),
+                        "price_usd": f"${price:.2f}",
+                        "source": "Pyth Network"
+                    }
+                    ai_json["message"] = f"The current price of {symbol.upper()} is ${price:.2f} USD"
+                except Exception as e:
+                    ai_json["error"] = f"Error fetching price: {str(e)}"
+        
+        elif action == "get_multiple_prices":
+            symbols = ai_json.get("symbols", [])
+            prices_result = []
+            
+            for symbol in symbols:
+                symbol = symbol.lower()
+                if symbol in PRICE_FEEDS:
+                    try:
+                        price_feed_id = PRICE_FEEDS[symbol]
+                        
+                        pyth_abi = [
+                            {
+                                "inputs": [
+                                    {"internalType": "bytes32", "name": "id", "type": "bytes32"},
+                                    {"internalType": "uint256", "name": "age", "type": "uint256"}
+                                ],
+                                "name": "getPriceNoOlderThan",
+                                "outputs": [
+                                    {
+                                        "components": [
+                                            {"internalType": "int64", "name": "price", "type": "int64"},
+                                            {"internalType": "uint64", "name": "conf", "type": "uint64"},
+                                            {"internalType": "int32", "name": "expo", "type": "int32"},
+                                            {"internalType": "uint256", "name": "publishTime", "type": "uint256"}
+                                        ],
+                                        "internalType": "struct PythStructs.Price",
+                                        "name": "price",
+                                        "type": "tuple"
+                                    }
+                                ],
+                                "stateMutability": "view",
+                                "type": "function"
+                            }
+                        ]
+                        
+                        pyth_contract = w3.eth.contract(
+                            address=Web3.to_checksum_address(PYTH_CONTRACT_ADDRESS),
+                            abi=pyth_abi
+                        )
+                        
+                        price_data = pyth_contract.functions.getPriceNoOlderThan(
+                            bytes.fromhex(price_feed_id[2:]),
+                            60
+                        ).call()
+                        
+                        price_raw = price_data[0]
+                        expo = price_data[2]
+                        price = price_raw * (10 ** expo)
+                        
+                        prices_result.append({
+                            "symbol": symbol.upper(),
+                            "price": float(price),
+                            "price_usd": f"${price:.2f}"
+                        })
+                    except:
+                        pass
+            
+            ai_json["prices"] = prices_result
+            price_list = ", ".join([f"{p['symbol']}: {p['price_usd']}" for p in prices_result])
+            ai_json["message"] = f"Current prices - {price_list}"
+        
+        return jsonify(ai_json)
+        
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+
+@app.route("/pyth/supported", methods=["GET"])
+def get_supported_symbols():
+    """Obtiene la lista de criptomonedas soportadas."""
+    return jsonify({
+        "success": True,
+        "count": len(PRICE_FEEDS),
+        "symbols": list(PRICE_FEEDS.keys()),
+        "message": f"Supported cryptocurrencies: {', '.join([s.upper() for s in PRICE_FEEDS.keys()])}"
+    })
+
+
 # ==========================
 # 🚀 Ejecutar servidor Flask
 # ==========================
