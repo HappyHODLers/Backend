@@ -1628,13 +1628,42 @@ Always respond in English and with valid JSON only."""
                         expo = int(price_data["expo"])
                         price = price_raw * (10 ** expo)
                         
+                        # Calcular confianza
+                        conf_raw = int(price_data["conf"])
+                        confidence = conf_raw * (10 ** expo)
+                        confidence_pct = (confidence / price * 100) if price > 0 else 0
+                        
+                        # Determinar volatilidad
+                        if confidence_pct < 0.1:
+                            volatility = "Very Low"
+                        elif confidence_pct < 0.5:
+                            volatility = "Low"
+                        elif confidence_pct < 1.0:
+                            volatility = "Moderate"
+                        elif confidence_pct < 2.0:
+                            volatility = "High"
+                        else:
+                            volatility = "Very High"
+                        
+                        # Timestamp legible
+                        from datetime import datetime
+                        publish_timestamp = datetime.fromtimestamp(price_data["publish_time"]).strftime("%Y-%m-%d %H:%M:%S UTC")
+                        
                         ai_json["price_data"] = {
                             "symbol": symbol.upper(),
                             "price": float(price),
                             "price_usd": f"${price:.2f}",
+                            "confidence": float(confidence),
+                            "confidence_usd": f"±${confidence:.4f}",
+                            "confidence_percentage": f"{confidence_pct:.3f}%",
+                            "volatility": volatility,
+                            "publish_time": price_data["publish_time"],
+                            "publish_timestamp": publish_timestamp,
+                            "expo": expo,
+                            "price_feed_id": price_feed["id"],
                             "source": "Pyth Network (Hermes API)"
                         }
-                        ai_json["message"] = f"The current price of {symbol.upper()} is ${price:.2f} USD"
+                        ai_json["message"] = f"The current price of {symbol.upper()} is ${price:.2f} USD (±${confidence:.4f}, {volatility} volatility)"
                 except Exception as e:
                     ai_json["error"] = f"Error fetching price: {str(e)}"
         
@@ -1664,13 +1693,30 @@ Always respond in English and with valid JSON only."""
                             expo = int(price_data["expo"])
                             price = price_raw * (10 ** expo)
                             
+                            # Calcular confianza
+                            conf_raw = int(price_data["conf"])
+                            confidence = conf_raw * (10 ** expo)
+                            confidence_pct = (confidence / price * 100) if price > 0 else 0
+                            
+                            # Volatilidad
+                            if confidence_pct < 0.5:
+                                volatility = "Low"
+                            elif confidence_pct < 1.0:
+                                volatility = "Moderate"
+                            else:
+                                volatility = "High"
+                            
                             # Encontrar símbolo por feed_id
                             symbol = next((k for k, v in PRICE_FEEDS.items() if v == feed_id), "UNKNOWN")
                             
                             prices_result.append({
                                 "symbol": symbol.upper(),
                                 "price": float(price),
-                                "price_usd": f"${price:.2f}"
+                                "price_usd": f"${price:.2f}",
+                                "confidence": float(confidence),
+                                "confidence_usd": f"±${confidence:.4f}",
+                                "volatility": volatility,
+                                "publish_time": price_data["publish_time"]
                             })
                 except Exception as e:
                     ai_json["error"] = f"Error fetching prices: {str(e)}"
