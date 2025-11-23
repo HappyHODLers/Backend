@@ -158,8 +158,8 @@ Create the following tables in your Supabase project:
 CREATE TABLE users (
     id SERIAL PRIMARY KEY,
     wallet VARCHAR(42) UNIQUE NOT NULL,
-    nombre_usuario VARCHAR(255),
-    clave_privada_encriptada TEXT,
+    user_name VARCHAR(255),
+    encrypted_private_key TEXT,
     created_at TIMESTAMP DEFAULT NOW()
 );
 
@@ -168,27 +168,27 @@ CREATE TABLE contacts (
     id SERIAL PRIMARY KEY,
     user_wallet VARCHAR(42) REFERENCES users(wallet) ON DELETE CASCADE,
     contact_wallet VARCHAR(42) NOT NULL,
-    nombre_contacto VARCHAR(255),
+    contact_name VARCHAR(255),
     created_at TIMESTAMP DEFAULT NOW()
 );
 
 -- Contact wallets table
 CREATE TABLE contact_wallets (
     id SERIAL PRIMARY KEY,
-    nombre_wallet_agregada VARCHAR(255),
-    wallet_agregada VARCHAR(42) NOT NULL,
-    wallet_quien_agrego VARCHAR(42) REFERENCES users(wallet) ON DELETE CASCADE,
+    added_wallet_name VARCHAR(255),
+    added_wallet VARCHAR(42) NOT NULL,
+    wallet_who_added VARCHAR(42) REFERENCES users(wallet) ON DELETE CASCADE,
     created_at TIMESTAMP DEFAULT NOW()
 );
 
 -- Transactions table
-CREATE TABLE transacciones (
+CREATE TABLE transactions (
     id SERIAL PRIMARY KEY,
-    wallet_origen VARCHAR(42) NOT NULL,
-    wallet_destino VARCHAR(42) NOT NULL,
-    monto DECIMAL(20, 8) NOT NULL,
+    source_wallet VARCHAR(42) NOT NULL,
+    destination_wallet VARCHAR(42) NOT NULL,
+    amount DECIMAL(20, 8) NOT NULL,
     hash VARCHAR(66) UNIQUE,
-    estado VARCHAR(20) DEFAULT 'pending',
+    status VARCHAR(20) DEFAULT 'pending',
     created_at TIMESTAMP DEFAULT NOW()
 );
 ```
@@ -223,18 +223,18 @@ http://127.0.0.1:5000
 ```json
 {
   "wallet": "0x742d35Cc6634C0532925a3b844Bc454e4438f44e",
-  "nombre_usuario": "John Doe",
-  "clave_privada_encriptada": "encrypted_private_key_string"
+  "user_name": "John Doe",
+  "encrypted_private_key": "encrypted_private_key_string"
 }
 ```
 - **Response (201 Created):**
 ```json
 {
-  "message": "Usuario creado exitosamente",
+  "message": "User created successfully",
   "user": {
     "id": 123,
     "wallet": "0x742d35Cc6634C0532925a3b844Bc454e4438f44e",
-    "nombre_usuario": "John Doe",
+    "user_name": "John Doe",
     "created_at": "2025-11-23T10:30:00Z"
   }
 }
@@ -258,8 +258,8 @@ curl http://127.0.0.1:5000/users/wallet/0x742d35Cc6634C0532925a3b844Bc454e4438f4
 {
   "id": 123,
   "wallet": "0x742d35Cc6634C0532925a3b844Bc454e4438f44e",
-  "nombre_usuario": "John Doe",
-  "clave_privada_encriptada": "encrypted_key",
+  "user_name": "John Doe",
+  "encrypted_private_key": "encrypted_key",
   "created_at": "2025-11-23T10:30:00Z"
 }
 ```
@@ -276,16 +276,16 @@ curl http://127.0.0.1:5000/users/wallet/0x742d35Cc6634C0532925a3b844Bc454e4438f4
 - **Request Body (partial updates allowed):**
 ```json
 {
-  "nombre_usuario": "John Smith"
+  "user_name": "John Smith"
 }
 ```
 - **Response (200 OK):**
 ```json
 {
-  "message": "Usuario actualizado exitosamente",
+  "message": "User updated successfully",
   "user": {
     "wallet": "0x742d35Cc6634C0532925a3b844Bc454e4438f44e",
-    "nombre_usuario": "John Smith"
+    "user_name": "John Smith"
   }
 }
 ```
@@ -302,7 +302,7 @@ curl http://127.0.0.1:5000/users/wallet/0x742d35Cc6634C0532925a3b844Bc454e4438f4
 - **Response (200 OK):**
 ```json
 {
-  "message": "Usuario eliminado exitosamente"
+  "message": "User deleted successfully"
 }
 ```
 - **Use Case:** Account deletion, GDPR compliance
@@ -321,17 +321,17 @@ curl http://127.0.0.1:5000/users/wallet/0x742d35Cc6634C0532925a3b844Bc454e4438f4
 ```json
 {
   "contact_wallet": "0x8626f6940E2eb28930eFb4CeF49B2d1F2C9C1199",
-  "nombre_contacto": "Alice Smith"
+  "contact_name": "Alice Smith"
 }
 ```
 - **Response (201 Created):**
 ```json
 {
-  "message": "Contacto agregado exitosamente",
+  "message": "Contact added successfully",
   "contact": {
     "id": 456,
     "contact_wallet": "0x8626f6940E2eb28930eFb4CeF49B2d1F2C9C1199",
-    "nombre_contacto": "Alice Smith"
+    "contact_name": "Alice Smith"
   }
 }
 ```
@@ -352,7 +352,7 @@ curl http://127.0.0.1:5000/users/wallet/0x742d35Cc6634C0532925a3b844Bc454e4438f4
     {
       "id": 456,
       "contact_wallet": "0x8626f6940E2eb28930eFb4CeF49B2d1F2C9C1199",
-      "nombre_contacto": "Alice Smith",
+      "contact_name": "Alice Smith",
       "created_at": "2025-11-20T15:00:00Z"
     }
   ]
@@ -371,7 +371,7 @@ curl http://127.0.0.1:5000/users/wallet/0x742d35Cc6634C0532925a3b844Bc454e4438f4
 - **Response (200 OK):**
 ```json
 {
-  "message": "Contacto eliminado exitosamente"
+  "message": "Contact deleted successfully"
 }
 ```
 - **Use Case:** Contact list management
@@ -389,19 +389,19 @@ curl http://127.0.0.1:5000/users/wallet/0x742d35Cc6634C0532925a3b844Bc454e4438f4
 - **Request Body:**
 ```json
 {
-  "nombre_wallet_agregada": "My Savings Wallet",
-  "wallet_agregada": "0xabcdef1234567890abcdef1234567890abcdef12",
-  "wallet_quien_agrego": "0x742d35Cc6634C0532925a3b844Bc454e4438f44e"
+  "added_wallet_name": "My Savings Wallet",
+  "added_wallet": "0xabcdef1234567890abcdef1234567890abcdef12",
+  "wallet_who_added": "0x742d35Cc6634C0532925a3b844Bc454e4438f44e"
 }
 ```
 - **Response (201 Created):**
 ```json
 {
-  "message": "Contact wallet agregado exitosamente",
+  "message": "Contact wallet added successfully",
   "contact_wallet": {
     "id": 789,
-    "nombre_wallet_agregada": "My Savings Wallet",
-    "wallet_agregada": "0xabcdef1234567890abcdef1234567890abcdef12"
+    "added_wallet_name": "My Savings Wallet",
+    "added_wallet": "0xabcdef1234567890abcdef1234567890abcdef12"
   }
 }
 ```
@@ -421,8 +421,8 @@ curl http://127.0.0.1:5000/users/wallet/0x742d35Cc6634C0532925a3b844Bc454e4438f4
   "contact_wallets": [
     {
       "id": 789,
-      "nombre_wallet_agregada": "My Savings Wallet",
-      "wallet_agregada": "0xabcdef1234567890abcdef1234567890abcdef12",
+      "added_wallet_name": "My Savings Wallet",
+      "added_wallet": "0xabcdef1234567890abcdef1234567890abcdef12",
       "created_at": "2025-11-22T08:00:00Z"
     }
   ]
@@ -443,23 +443,23 @@ curl http://127.0.0.1:5000/users/wallet/0x742d35Cc6634C0532925a3b844Bc454e4438f4
 - **Request Body:**
 ```json
 {
-  "wallet_origen": "0x742d35Cc6634C0532925a3b844Bc454e4438f44e",
-  "wallet_destino": "0x8626f6940E2eb28930eFb4CeF49B2d1F2C9C1199",
-  "monto": "0.1",
-  "clave_privada": "0xprivate_key_here"
+  "source_wallet": "0x742d35Cc6634C0532925a3b844Bc454e4438f44e",
+  "destination_wallet": "0x8626f6940E2eb28930eFb4CeF49B2d1F2C9C1199",
+  "amount": "0.1",
+  "private_key": "0xprivate_key_here"
 }
 ```
 - **Response (201 Created):**
 ```json
 {
-  "message": "Transacción creada y enviada exitosamente",
+  "message": "Transaction created and sent successfully",
   "transaction": {
     "id": 1001,
-    "wallet_origen": "0x742d35Cc6634C0532925a3b844Bc454e4438f44e",
-    "wallet_destino": "0x8626f6940E2eb28930eFb4CeF49B2d1F2C9C1199",
-    "monto": "0.1",
+    "source_wallet": "0x742d35Cc6634C0532925a3b844Bc454e4438f44e",
+    "destination_wallet": "0x8626f6940E2eb28930eFb4CeF49B2d1F2C9C1199",
+    "amount": "0.1",
     "hash": "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
-    "estado": "pending",
+    "status": "pending",
     "created_at": "2025-11-23T12:00:00Z"
   }
 }
@@ -484,11 +484,11 @@ curl http://127.0.0.1:5000/users/wallet/0x742d35Cc6634C0532925a3b844Bc454e4438f4
   "transactions": [
     {
       "id": 1001,
-      "wallet_origen": "0x742d35Cc6634C0532925a3b844Bc454e4438f44e",
-      "wallet_destino": "0x8626f6940E2eb28930eFb4CeF49B2d1F2C9C1199",
-      "monto": "0.1",
+      "source_wallet": "0x742d35Cc6634C0532925a3b844Bc454e4438f44e",
+      "destination_wallet": "0x8626f6940E2eb28930eFb4CeF49B2d1F2C9C1199",
+      "amount": "0.1",
       "hash": "0x1234567890abcdef...",
-      "estado": "confirmed",
+      "status": "confirmed",
       "created_at": "2025-11-23T12:00:00Z"
     }
   ]
@@ -867,21 +867,21 @@ curl "http://127.0.0.1:5000/pyth/prices?symbols=eth,btc,sol"
 **Invalid Symbol:**
 ```json
 {
-  "error": "Símbolo no soportado. Símbolos válidos: eth, btc, usdc, usdt, bnb, sol, matic, avax, ada, doge"
+  "error": "Unsupported symbol. Valid symbols: eth, btc, usdc, usdt, bnb, sol, matic, avax, ada, doge"
 }
 ```
 
 **User Not Found:**
 ```json
 {
-  "error": "Usuario no encontrado"
+  "error": "User not found"
 }
 ```
 
 **Pyth Network Error:**
 ```json
 {
-  "error": "Error al obtener precio de Pyth Network",
+  "error": "Error fetching price from Pyth Network",
   "details": "Connection timeout"
 }
 ```
@@ -889,7 +889,7 @@ curl "http://127.0.0.1:5000/pyth/prices?symbols=eth,btc,sol"
 **Insufficient Balance:**
 ```json
 {
-  "error": "Saldo insuficiente para realizar la transacción"
+  "error": "Insufficient balance to complete the transaction"
 }
 ```
 
@@ -905,8 +905,8 @@ curl -X POST http://127.0.0.1:5000/users \
   -H "Content-Type: application/json" \
   -d '{
     "wallet": "0x742d35Cc6634C0532925a3b844Bc454e4438f44e",
-    "nombre_usuario": "Alice",
-    "clave_privada_encriptada": "encrypted_key_123"
+    "user_name": "Alice",
+    "encrypted_private_key": "encrypted_key_123"
   }'
 ```
 
@@ -934,10 +934,10 @@ curl -X POST http://127.0.0.1:5000/pyth/chat \
 curl -X POST http://127.0.0.1:5000/transactions \
   -H "Content-Type: application/json" \
   -d '{
-    "wallet_origen": "0x742d35Cc6634C0532925a3b844Bc454e4438f44e",
-    "wallet_destino": "0x8626f6940E2eb28930eFb4CeF49B2d1F2C9C1199",
-    "monto": "0.5",
-    "clave_privada": "0xprivate_key_here"
+    "source_wallet": "0x742d35Cc6634C0532925a3b844Bc454e4438f44e",
+    "destination_wallet": "0x8626f6940E2eb28930eFb4CeF49B2d1F2C9C1199",
+    "amount": "0.5",
+    "private_key": "0xprivate_key_here"
   }'
 ```
 
