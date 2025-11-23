@@ -1153,24 +1153,3 @@ curl -X POST http://localhost:5000/chat \
   -d '{"message": "Busca el usuario con wallet ST2PQHQ0EYR93KSP0B6AN9AHEJ1K3EBRJP02HPGK6"}'
 ```
 
-**Ver más ejemplos en [AI_DATABASE_EXAMPLES.md](AI_DATABASE_EXAMPLES.md)**
-
----
-
-## 📞 Soporte
-
-Si tienes problemas o preguntas, por favor:
-
-1. Revisa la sección de [Solución de Problemas](#-solución-de-problemas)
-2. Abre un [Issue](https://github.com/JHAMILCALI/clarity-backend/issues) en GitHub
-3. Consulta la [documentación de Stacks](https://docs.stacks.co/)
-
----
-
-<div align="center">
-
-**⭐ Si este proyecto te fue útil, considera darle una estrella en GitHub ⭐**
-
-Hecho con ❤️ por JHAMILCALI
-
-</div>
